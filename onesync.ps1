@@ -240,6 +240,13 @@ function Read-State {
 
 function Get-Mtime([string]$Path) { (Get-Item -LiteralPath $Path -Force).LastWriteTimeUtc }
 
+# A file copied from the repo gets the commit time of that version, not the copy time.
+# Otherwise a delete committed in the same second as the copy looks older than the copy.
+function Set-VersionTime([string]$Path, $Time) {
+  if ($DryRun -or -not $Time -or -not (Test-Path -LiteralPath $Path)) { return }
+  (Get-Item -LiteralPath $Path -Force).LastWriteTimeUtc = $Time
+}
+
 function Get-SyncPlan {
   $hist      = Get-History
   $prev      = Read-State
@@ -251,6 +258,7 @@ function Get-SyncPlan {
     Trash        = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     ToRepo       = @{}   # repo rel -> local path
     ToLocal      = @{}   # local key -> repo path
+    History      = $hist
   }
 
   # 1. Deleted on this machine: synced last round, gone now. A project folder that is
@@ -336,15 +344,18 @@ function Invoke-Plan($Plan) {
       Copy-Item -LiteralPath $to -Destination $keep -Force
     }
     Copy-File $Plan.ToLocal[$k] $to
+    Set-VersionTime $to $Plan.History[(ConvertTo-Key $Repo $Plan.ToLocal[$k])].Time
   }
 
   # Shared memory that changed this round goes to every project folder.
   $namespaces = Get-Namespaces
   foreach ($f in (Get-ChildItem -LiteralPath (Join-Path $Repo 'memory/_shared') -File -ErrorAction SilentlyContinue)) {
     if ($f.Name -eq '.gitkeep') { continue }
+    $rel = "memory/_shared/$($f.Name)"
+    $time = if ($Plan.ToRepo.ContainsKey($rel)) { Get-Mtime $Plan.ToRepo[$rel] } else { $Plan.History[$rel].Time }
     foreach ($ns in $namespaces) {
       $to = Join-Path $Projects "$ns/memory/$($f.Name)"
-      if (-not (Test-Path -LiteralPath $to) -or -not (Test-SameBytes $f.FullName $to)) { Copy-File $f.FullName $to }
+      if (-not (Test-Path -LiteralPath $to) -or -not (Test-SameBytes $f.FullName $to)) { Copy-File $f.FullName $to; Set-VersionTime $to $time }
     }
   }
 }
