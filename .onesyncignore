@@ -1,0 +1,3 @@
+# Patterns to skip, one per line, matched against paths under ~/.claude.
+# Example:
+# skills/my-huge-skill/*
